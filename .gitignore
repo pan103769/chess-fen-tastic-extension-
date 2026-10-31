@@ -1,7 +1,8 @@
-﻿.venv/
+.venv/
 .venv-1/
 build/
 dist/
 chessposition2.png
 __pycache__/
 *.pyc
+.harness_state/

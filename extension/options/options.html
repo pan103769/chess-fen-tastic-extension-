@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chess FEN-tastic Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="options-container">
+    <header class="header">
+      <span class="icon">♟️</span>
+      <div>
+        <h1>Chess FEN-tastic Settings</h1>
+        <p class="subtitle">Configure your Vision AI backend and recognition preferences</p>
+      </div>
+    </header>
+
+    <form id="settingsForm" class="form">
+      <section class="section">
+        <h2>Vision AI Provider</h2>
+        <div class="radio-group">
+          <!-- 1. Ollama Cloud -->
+          <label class="radio-card">
+            <input type="radio" name="provider" value="ollama_cloud" checked>
+            <div class="radio-content">
+              <div class="radio-title-row">
+                <span class="radio-title">Ollama Cloud (Gemma 4 Cloud)</span>
+                <span class="badge badge-cloud">Cloud Inference</span>
+              </div>
+              <span class="radio-desc">
+                Local Ollama acts as client; inference runs in the cloud. Does not require downloading Gemma 4 locally.
+              </span>
+            </div>
+          </label>
+
+          <!-- 2. Google Gemini API -->
+          <label class="radio-card">
+            <input type="radio" name="provider" value="gemini">
+            <div class="radio-content">
+              <div class="radio-title-row">
+                <span class="radio-title">Google Gemini API</span>
+                <span class="badge badge-api">Cloud API</span>
+              </div>
+              <span class="radio-desc">
+                Direct browser-to-cloud visual recognition using Google's Gemini Flash multimodal models.
+              </span>
+            </div>
+          </label>
+
+          <!-- 3. Ollama Local -->
+          <label class="radio-card">
+            <input type="radio" name="provider" value="ollama_local">
+            <div class="radio-content">
+              <div class="radio-title-row">
+                <span class="radio-title">Ollama Local</span>
+                <span class="badge badge-local">Local GPU/CPU</span>
+              </div>
+              <span class="radio-desc">
+                For users who have downloaded a local vision model (e.g. llama3.2-vision, llava) to run 100% offline.
+              </span>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <!-- Ollama Cloud Configuration -->
+      <section id="ollamaCloudSection" class="section">
+        <div class="section-header">
+          <h2>Ollama Cloud Configuration</h2>
+        </div>
+
+        <div class="info-callout">
+          <strong>How Ollama Cloud Works:</strong> Your local Ollama application (listening on localhost:11434) acts as the secure client bridge. The <code>gemma4:cloud</code> model executes in Ollama's high-speed cloud infrastructure. You do <em>not</em> need to download massive model weights to your computer.
+        </div>
+
+        <div class="field">
+          <label for="ollamaCloudUrl">Local Ollama Client URL</label>
+          <input type="text" id="ollamaCloudUrl" placeholder="http://localhost:11434">
+          <span class="field-hint">Default is http://localhost:11434 (the local Ollama service).</span>
+        </div>
+
+        <div class="field">
+          <label>Model</label>
+          <div class="static-value-box">
+            <code>gemma4:cloud</code>
+            <span class="field-subnote">Pre-configured cloud model. No local download required.</span>
+          </div>
+        </div>
+
+        <div class="test-row">
+          <button type="button" id="testOllamaCloudBtn" class="btn-test">Test Ollama Cloud Connection</button>
+          <span id="ollamaCloudStatus" class="test-status"></span>
+        </div>
+      </section>
+
+      <!-- Gemini Configuration -->
+      <section id="geminiSection" class="section" style="display: none;">
+        <h2>Google Gemini API Configuration</h2>
+        <div class="field">
+          <label for="geminiApiKey">Gemini API Key</label>
+          <div class="input-with-toggle">
+            <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key (AIza...)">
+            <button type="button" id="toggleKeyBtn" class="btn-toggle">Show</button>
+          </div>
+          <span class="field-hint">
+            Get a free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>.
+          </span>
+        </div>
+
+        <div class="field">
+          <label for="geminiModel">Model</label>
+          <select id="geminiModel">
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fastest & Recommended)</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+          </select>
+        </div>
+      </section>
+
+      <!-- Ollama Local Configuration -->
+      <section id="ollamaLocalSection" class="section" style="display: none;">
+        <h2>Ollama Local Configuration</h2>
+        <div class="field">
+          <label for="ollamaLocalUrl">Local Ollama URL</label>
+          <input type="text" id="ollamaLocalUrl" placeholder="http://localhost:11434">
+          <span class="field-hint">Default is http://localhost:11434</span>
+        </div>
+
+        <div class="field">
+          <label for="ollamaLocalModel">Local Vision Model Name</label>
+          <input type="text" id="ollamaLocalModel" placeholder="llama3.2-vision">
+          <span class="field-hint">e.g. llama3.2-vision, llava, gemma3:4b</span>
+        </div>
+
+        <div class="test-row">
+          <button type="button" id="testOllamaLocalBtn" class="btn-test">Test Local Model</button>
+          <span id="ollamaLocalStatus" class="test-status"></span>
+        </div>
+      </section>
+
+      <!-- Workflow Preferences -->
+      <section class="section">
+        <h2>Workflow Preferences</h2>
+        <label class="checkbox-label">
+          <input type="checkbox" id="autoOpenLichess">
+          <span>Automatically open board in Lichess upon successful recognition</span>
+        </label>
+      </section>
+
+      <div class="actions">
+        <button type="submit" id="saveBtn" class="btn-save">Save Settings</button>
+        <span id="saveStatus" class="save-status"></span>
+      </div>
+    </form>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

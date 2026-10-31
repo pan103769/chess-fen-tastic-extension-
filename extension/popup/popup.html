@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chess FEN-tastic</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="brand">
+        <span class="icon">♟️</span>
+        <span class="title">Chess FEN-tastic</span>
+      </div>
+      <button id="settingsBtn" class="btn-icon" title="Settings">⚙️</button>
+    </header>
+
+    <main class="content">
+      <button id="captureBtn" class="btn-primary">
+        <span class="btn-icon-label">📸</span>
+        <span class="btn-text">Capture Chessboard</span>
+        <span class="btn-badge">Alt+Shift+C</span>
+      </button>
+
+      <div id="statusBox" class="status-box status-idle">
+        <div id="statusSpinner" class="spinner" style="display: none;"></div>
+        <span id="statusMessage">Click Capture or press Alt+Shift+C to select a chessboard.</span>
+      </div>
+
+      <div id="resultContainer" class="result-container" style="display: none;">
+        <div class="result-header">
+          <span class="section-label">Generated FEN</span>
+          <span id="validBadge" class="badge badge-success">VALID FEN</span>
+        </div>
+
+        <div class="fen-box">
+          <textarea id="fenOutput" readonly rows="2"></textarea>
+          <button id="copyFenBtn" class="btn-copy" title="Copy to clipboard">📋 Copy</button>
+        </div>
+
+        <div class="action-buttons">
+          <button id="openLichessBtn" class="btn-secondary">
+            <span>♟️ Lichess</span>
+          </button>
+          <button id="openChessComBtn" class="btn-secondary">
+            <span>⚔️ Chess.com</span>
+          </button>
+        </div>
+
+        <div id="previewWrapper" class="preview-wrapper" style="display: none;">
+          <span class="section-label">Captured Position</span>
+          <img id="previewImage" alt="Cropped Board Preview">
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
+

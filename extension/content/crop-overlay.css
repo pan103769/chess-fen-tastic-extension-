@@ -1,0 +1,51 @@
+/* Chess FEN-tastic Snipping Overlay */
+#chess-fentastic-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2147483647;
+  cursor: crosshair;
+  background-color: rgba(0, 0, 0, 0.35);
+  user-select: none;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#chess-fentastic-banner {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #1e293b;
+  color: #f8fafc;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #334155;
+}
+
+#chess-fentastic-banner .key-hint {
+  background-color: #475569;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+#chess-fentastic-selection {
+  position: absolute;
+  border: 2px solid #ef4444;
+  background-color: rgba(239, 68, 68, 0.15);
+  box-shadow: 0 0 0 99999px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  border-radius: 2px;
+}
+
