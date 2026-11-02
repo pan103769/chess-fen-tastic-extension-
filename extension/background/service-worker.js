@@ -9,11 +9,13 @@ import {
   validateFen,
   getBoardUrls,
 } from "../lib/fen.js";
-import { recognizeChessboard } from "../lib/vision-api.js";
+import { runHybridRecognition } from "../lib/hybrid-recognizer.js";
+import { getSettings } from "../lib/settings-storage.js";
 import {
   isRestrictedUrl,
   RESTRICTED_PAGE_MESSAGE,
   DEFAULT_SETTINGS,
+  VERIFICATION_STATUS,
 } from "../lib/constants.js";
 
 let pendingScreenshot = null;
@@ -128,24 +130,75 @@ async function cropScreenshot(fullDataUrl, box) {
   const safeW = Math.max(1, Math.min(naturalW, imageBitmap.width - safeX));
   const safeH = Math.max(1, Math.min(naturalH, imageBitmap.height - safeY));
 
-  const offscreen = new OffscreenCanvas(safeW, safeH);
+  // Margin for algebraic coordinate anchors (files a-h, ranks 8-1)
+  // This provides clear spatial anchors for multimodal vision models (e.g. Gemma 4 Cloud)
+  // and eliminates the 1-file horizontal displacement bug on unannotated chessboards.
+  const margin = Math.max(20, Math.round(Math.min(safeW, safeH) * 0.06));
+  const totalW = safeW + margin * 2;
+  const totalH = safeH + margin * 2;
+
+  const offscreen = new OffscreenCanvas(totalW, totalH);
   const ctx = offscreen.getContext("2d");
 
+  // Fill outer border background
+  ctx.fillStyle = "#f3f4f6";
+  ctx.fillRect(0, 0, totalW, totalH);
+
+  // Draw the cropped chessboard in the center
   ctx.drawImage(
     imageBitmap,
     safeX,
     safeY,
     safeW,
     safeH,
-    0,
-    0,
+    margin,
+    margin,
     safeW,
     safeH
   );
 
+  // Draw coordinate labels along margins
+  const sqW = safeW / 8;
+  const sqH = safeH / 8;
+  const fontSize = Math.max(12, Math.round(margin * 0.65));
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.fillStyle = "#1f2937";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const files = "abcdefgh";
+  for (let i = 0; i < 8; i++) {
+    const x = margin + i * sqW + sqW / 2;
+    // Top file label
+    ctx.fillText(files[i], x, margin / 2);
+    // Bottom file label
+    ctx.fillText(files[i], x, totalH - margin / 2);
+  }
+
+  const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
+  for (let j = 0; j < 8; j++) {
+    const y = margin + j * sqH + sqH / 2;
+    // Left rank label
+    ctx.fillText(ranks[j].toString(), margin / 2, y);
+    // Right rank label
+    ctx.fillText(ranks[j].toString(), totalW - margin / 2, y);
+  }
+
+  // Extract pixel buffer of unannotated chessboard for square-level computer vision analysis
+  const boardImageData = ctx.getImageData(margin, margin, safeW, safeH);
+
   const croppedBlob = await offscreen.convertToBlob({ type: "image/png" });
   const buffer = await croppedBlob.arrayBuffer();
-  return arrayBufferToDataUrl(buffer, "image/png");
+  const annotatedDataUrl = arrayBufferToDataUrl(buffer, "image/png");
+
+  return {
+    annotatedDataUrl,
+    rawPixelBuffer: {
+      data: boardImageData.data,
+      width: boardImageData.width,
+      height: boardImageData.height,
+    },
+  };
 }
 
 /**
@@ -219,77 +272,83 @@ async function processCroppedArea(box) {
     throw new Error("No pending screenshot found to crop. Please try capturing again.");
   }
 
+  // Clear previous result so stale FEN or VERIFIED status is never displayed on failure
   await chrome.storage.local.set({
     lastStatus: { state: "processing", message: "Cropping chessboard image..." },
+    lastResult: null,
+    lastCroppedImage: null,
   });
 
-  // 1. Crop image
-  const croppedDataUrl = await cropScreenshot(pendingScreenshot, box);
-  pendingScreenshot = null; // Clear cached full screenshot
+  try {
+    // 1. Crop image and obtain unannotated board pixel buffer
+    const { annotatedDataUrl, rawPixelBuffer } = await cropScreenshot(pendingScreenshot, box);
+    pendingScreenshot = null; // Clear cached full screenshot
 
-  // 2. Fetch user settings (defaulting to Ollama Cloud / gemma4:cloud)
-  const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    // 2. Fetch latest user settings from chrome.storage.local using settings-storage
+    const settings = await getSettings();
 
-  const providerLabel =
-    settings.provider === "gemini"
-      ? "Google Gemini API"
-      : settings.provider === "ollama_local"
-      ? `Local Ollama (${settings.ollamaLocalModel})`
-      : "Ollama Cloud (gemma4:cloud)";
+    const providerLabel =
+      settings.provider === "gemini"
+        ? `Google Gemini (${settings.geminiModel || "gemini-2.5-flash"})`
+        : settings.provider === "ollama_local"
+        ? `Local Ollama (${settings.ollamaLocalModel || "llama3.2-vision"})`
+        : `Ollama Cloud (${settings.ollamaCloudModel || "gemma4:31b"})`;
 
-  await chrome.storage.local.set({
-    lastStatus: { state: "processing", message: `Analyzing board using ${providerLabel}...` },
-    lastCroppedImage: croppedDataUrl,
-  });
+    await chrome.storage.local.set({
+      lastStatus: { state: "processing", message: `Analyzing board using ${providerLabel}...` },
+      lastCroppedImage: annotatedDataUrl,
+    });
 
-  // 3. Vision Recognition (Strictly routes to chosen provider)
-  const visionOutput = await recognizeChessboard(croppedDataUrl, settings);
+    // 3. Run Hybrid Recognition (Stage 1-6)
+    const result = await runHybridRecognition(annotatedDataUrl, settings, {
+      pixelBuffer: rawPixelBuffer,
+    });
 
-  await chrome.storage.local.set({
-    lastStatus: { state: "processing", message: "Parsing coordinates & generating FEN..." },
-    lastVisionOutput: visionOutput,
-  });
+    const finalResult = {
+      ...result,
+      timestamp: Date.now(),
+    };
 
-  // 4. Parse 64 squares
-  const { board, turn, error: parseError } = parseBoard(visionOutput);
-  if (parseError || !board) {
-    throw new Error(parseError || "Failed to parse 64 chess squares from model output.");
+    const statusState = result.status === VERIFICATION_STATUS.INVALID ? "error" : "success";
+
+    await chrome.storage.local.set({
+      lastStatus: { state: statusState, message: result.statusMessage },
+      lastResult: finalResult,
+    });
+
+    // Set action badge to indicate verification status
+    if (chrome.action?.setBadgeText) {
+      if (result.status === VERIFICATION_STATUS.VERIFIED) {
+        chrome.action.setBadgeText({ text: "✓" });
+        chrome.action.setBadgeBackgroundColor({ color: "#22c55e" });
+      } else if (result.status === VERIFICATION_STATUS.NEEDS_REVIEW) {
+        chrome.action.setBadgeText({ text: "?" });
+        chrome.action.setBadgeBackgroundColor({ color: "#f59e0b" });
+      } else {
+        chrome.action.setBadgeText({ text: "!" });
+        chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
+      }
+    }
+
+    // 4. Optional auto-open in Lichess
+    if (result.isValid && result.status === VERIFICATION_STATUS.VERIFIED && settings.autoOpenLichess) {
+      chrome.tabs.create({ url: result.urls.lichess });
+    }
+
+    return finalResult;
+  } catch (error) {
+    console.error("Recognition processing error:", error);
+    await chrome.storage.local.set({
+      lastStatus: { state: "error", message: error.message || "Recognition failed." },
+      lastResult: null,
+      lastCroppedImage: null,
+    });
+    if (chrome.action?.setBadgeText) {
+      chrome.action.setBadgeText({ text: "!" });
+      chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
+    }
+    throw error;
   }
-
-  // 5. Generate and Validate FEN
-  const fen = generateFen(board, turn);
-  if (!fen) {
-    throw new Error("Could not construct FEN notation from parsed board.");
-  }
-
-  const isValid = validateFen(fen);
-  const urls = getBoardUrls(fen);
-
-  const finalResult = {
-    fen,
-    isValid,
-    urls,
-    turn,
-    timestamp: Date.now(),
-  };
-
-  await chrome.storage.local.set({
-    lastStatus: { state: "success", message: "FEN successfully generated!" },
-    lastResult: finalResult,
-  });
-
-  // Set action badge to indicate completion
-  if (chrome.action?.setBadgeText) {
-    chrome.action.setBadgeText({ text: "✓" });
-    chrome.action.setBadgeBackgroundColor({ color: "#22c55e" });
-  }
-
-  // 6. Optional auto-open in Lichess
-  if (isValid && settings.autoOpenLichess) {
-    chrome.tabs.create({ url: urls.lichess });
-  }
-
-  return finalResult;
 }
 
 // Keyboard shortcuts (commands)
@@ -318,6 +377,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error("Processing error:", error);
         chrome.storage.local.set({
           lastStatus: { state: "error", message: error.message || "Recognition failed." },
+          lastResult: null,
+          lastCroppedImage: null,
         });
         if (chrome.action?.setBadgeText) {
           chrome.action.setBadgeText({ text: "!" });

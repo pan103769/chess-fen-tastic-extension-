@@ -19,12 +19,74 @@ export function cleanBase64(dataUrl) {
 }
 
 /**
- * Checks connectivity to an Ollama server and verifies if a specific model is registered.
+ * Checks status and authentication against Ollama Cloud (direct cloud API).
+ * Does NOT require Ollama Desktop or a local daemon.
+ * @param {string} apiKey
+ * @param {string} hostUrl
+ * @param {string} requiredModel
+ * @returns {Promise<{ connected: boolean, authenticated: boolean, modelFound: boolean, models: string[] }>}
+ */
+export async function checkOllamaCloudStatus(apiKey, hostUrl = "https://ollama.com", requiredModel = "gemma4:31b") {
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error("Please enter your Ollama Cloud API key to test the connection.");
+  }
+
+  const cleanUrl = hostUrl.replace(/\/+$/, "");
+  let response;
+
+  try {
+    response = await fetch(`${cleanUrl}/api/tags`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
+    });
+  } catch (err) {
+    throw new Error(
+      `Cannot connect to Ollama Cloud at ${cleanUrl}. Please check your network connection.`
+    );
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        "Invalid Ollama Cloud API key (HTTP 401 Unauthorized). Please check your key at https://ollama.com/settings/keys."
+      );
+    }
+    if (response.status === 429) {
+      throw new Error("Ollama Cloud rate limit reached. Please wait a moment before trying again.");
+    }
+    throw new Error(`Ollama Cloud returned error: HTTP ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json().catch(() => ({ models: [] }));
+  const models = (data.models || []).map((m) => m.name || m.model || "");
+  const foundModelObj = (data.models || []).find(
+    (m) =>
+      (m.name || "").toLowerCase() === requiredModel.toLowerCase() ||
+      (m.name || "").toLowerCase().startsWith(requiredModel.toLowerCase() + ":") ||
+      (m.model || "").toLowerCase() === requiredModel.toLowerCase()
+  );
+
+  const modelFound = !!foundModelObj;
+
+  if (!modelFound && requiredModel) {
+    throw new Error(
+      `Model '${requiredModel}' is not currently available on your Ollama Cloud account.`
+    );
+  }
+
+  return { connected: true, authenticated: true, modelFound, models };
+}
+
+/**
+ * Checks connectivity to a local Ollama server (for optional local inference).
  * @param {string} hostUrl
  * @param {string} requiredModel
  * @returns {Promise<{ connected: boolean, modelFound: boolean, models: string[], isCloud: boolean }>}
  */
-export async function checkOllamaStatus(hostUrl = "http://localhost:11434", requiredModel = "gemma4:cloud") {
+export async function checkOllamaLocalStatus(hostUrl = "http://localhost:11434", requiredModel = "llama3.2-vision") {
   const cleanUrl = hostUrl.replace(/\/+$/, "");
   let response;
 
@@ -35,7 +97,7 @@ export async function checkOllamaStatus(hostUrl = "http://localhost:11434", requ
     });
   } catch (err) {
     throw new Error(
-      `Cannot connect to Ollama at ${cleanUrl}. Please ensure the Ollama desktop application is running (it handles the connection to Ollama Cloud).`
+      `Cannot connect to local Ollama at ${cleanUrl}. Please ensure the Ollama desktop application is running.`
     );
   }
 
@@ -45,14 +107,15 @@ export async function checkOllamaStatus(hostUrl = "http://localhost:11434", requ
         `Ollama returned HTTP 403 Forbidden (CORS restriction). Ensure OLLAMA_ORIGINS="*" is set in your environment or restart Ollama.`
       );
     }
-    throw new Error(`Ollama returned error: HTTP ${response.status} ${response.statusText}`);
+    throw new Error(`Local Ollama returned error: HTTP ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json().catch(() => ({ models: [] }));
   const models = (data.models || []).map((m) => m.name || m.model || "");
   const foundModelObj = (data.models || []).find(
-    (m) => (m.name || "").toLowerCase() === requiredModel.toLowerCase() ||
-           (m.name || "").toLowerCase().startsWith(requiredModel.toLowerCase() + ":")
+    (m) =>
+      (m.name || "").toLowerCase() === requiredModel.toLowerCase() ||
+      (m.name || "").toLowerCase().startsWith(requiredModel.toLowerCase() + ":")
   );
 
   const modelFound = !!foundModelObj;
@@ -60,22 +123,59 @@ export async function checkOllamaStatus(hostUrl = "http://localhost:11434", requ
 
   if (!modelFound && requiredModel) {
     throw new Error(
-      `Model '${requiredModel}' is not registered in your Ollama client. Run 'ollama run ${requiredModel}' once in your terminal to register it for cloud inference (no local weights will be downloaded).`
+      `Local model '${requiredModel}' is not downloaded. Run 'ollama pull ${requiredModel}' in your terminal.`
     );
   }
 
   return { connected: true, modelFound, models, isCloud };
 }
 
+// Backwards compatibility alias for local check
+export const checkOllamaStatus = checkOllamaLocalStatus;
+
 /**
- * Calls Ollama Cloud using gemma4:cloud.
- * The local Ollama client acts as the gateway while inference runs in Ollama Cloud.
- * @param {string} hostUrl
- * @param {string} base64Image
+ * Calls Ollama Cloud direct API (https://ollama.com/api/chat).
+ * Runs inference in the cloud without requiring local Ollama server or downloads.
+ * @param {Object|string} options Options object or hostUrl for backwards compatibility
+ * @param {string} [fallbackImage]
+ * @param {string} [maybeKey]
+ * @param {string} [maybeModel]
  * @returns {Promise<string>}
  */
-export async function callOllamaCloudVision(hostUrl = "http://localhost:11434", base64Image) {
-  const model = "gemma4:cloud";
+export async function callOllamaCloudVision(options, fallbackImage, maybeKey, maybeModel) {
+  let apiKey = "";
+  let hostUrl = "https://ollama.com";
+  let model = "gemma4:31b";
+  let base64Image = "";
+
+  if (typeof options === "object" && options !== null && !Array.isArray(options)) {
+    apiKey = options.apiKey || options.ollamaApiKey || "";
+    hostUrl = options.hostUrl || options.ollamaCloudUrl || "https://ollama.com";
+    model = options.model || options.ollamaCloudModel || "gemma4:31b";
+    base64Image = options.base64Image || "";
+  } else {
+    hostUrl = options || "https://ollama.com";
+    base64Image = fallbackImage || "";
+    apiKey = maybeKey || "";
+    model = maybeModel || "gemma4:31b";
+  }
+
+  // Safety net: if key wasn't explicitly passed, retrieve it directly from chrome.storage.local
+  if (!apiKey && typeof chrome !== "undefined" && chrome.storage?.local) {
+    try {
+      const stored = await chrome.storage.local.get(["ollamaApiKey"]);
+      if (stored && stored.ollamaApiKey) {
+        apiKey = stored.ollamaApiKey.trim();
+      }
+    } catch (_) {}
+  }
+
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error(
+      "Ollama Cloud API Key is required. Please set your API key in extension settings (available from https://ollama.com/settings/keys)."
+    );
+  }
+
   const url = `${hostUrl.replace(/\/+$/, "")}/api/chat`;
   const rawBase64 = cleanBase64(base64Image);
 
@@ -99,12 +199,15 @@ export async function callOllamaCloudVision(hostUrl = "http://localhost:11434", 
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
       body: JSON.stringify(payload),
     });
   } catch (err) {
     throw new Error(
-      `Cannot connect to Ollama at ${url}. Ensure the Ollama desktop application is running.`
+      `Cannot connect to Ollama Cloud at ${url}. Please check your internet connection.`
     );
   }
 
@@ -120,29 +223,23 @@ export async function callOllamaCloudVision(hostUrl = "http://localhost:11434", 
 
     const lowerDetail = errDetail.toLowerCase();
 
-    // Check for true Ollama Cloud authentication failure
     if (
       response.status === 401 ||
       lowerDetail.includes("unauthorized") ||
-      lowerDetail.includes("login") ||
-      lowerDetail.includes("sign in") ||
       lowerDetail.includes("auth")
     ) {
       throw new Error(
-        "Ollama Cloud authentication required. Please sign in to Ollama by running 'ollama login' in terminal or via the Ollama desktop app."
+        "Invalid or expired Ollama Cloud API key. Please verify your key at https://ollama.com/settings/keys."
       );
     }
 
-    // Check for CORS 403 block from Ollama's local server (empty or Forbidden body with 403)
-    if (response.status === 403) {
-      throw new Error(
-        `Ollama local server blocked extension access (HTTP 403 CORS Forbidden). Ensure OLLAMA_ORIGINS="*" is set in your environment or restart Ollama.`
-      );
+    if (response.status === 429) {
+      throw new Error("Ollama Cloud rate limit exceeded. Please wait a moment before trying again.");
     }
 
-    if (lowerDetail.includes("not found") || lowerDetail.includes("pull")) {
+    if (response.status === 404 || lowerDetail.includes("not found")) {
       throw new Error(
-        `Ollama Cloud model 'gemma4:cloud' is not available. Run 'ollama run gemma4:cloud' once in your terminal to enable cloud access.`
+        `Ollama Cloud model '${model}' was not found. Please verify the model identifier in settings.`
       );
     }
 
@@ -292,11 +389,12 @@ export async function recognizeChessboard(base64Image, settings = {}) {
   const provider = settings.provider || PROVIDERS.OLLAMA_CLOUD;
 
   if (provider === PROVIDERS.OLLAMA_CLOUD || provider === "ollama") {
-    // Strictly invoke gemma4:cloud via Ollama Cloud
-    return callOllamaCloudVision(
-      settings.ollamaCloudUrl || settings.ollamaUrl || "http://localhost:11434",
-      base64Image
-    );
+    return callOllamaCloudVision({
+      apiKey: settings.ollamaApiKey,
+      hostUrl: settings.ollamaCloudUrl || "https://ollama.com",
+      model: settings.ollamaCloudModel || "gemma4:31b",
+      base64Image,
+    });
   }
 
   if (provider === PROVIDERS.OLLAMA_LOCAL) {

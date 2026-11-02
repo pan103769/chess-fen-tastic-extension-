@@ -31,12 +31,56 @@
       <div id="resultContainer" class="result-container" style="display: none;">
         <div class="result-header">
           <span class="section-label">Generated FEN</span>
-          <span id="validBadge" class="badge badge-success">VALID FEN</span>
+          <div class="badges-row">
+            <span id="verificationBadge" class="badge badge-verified">VERIFIED</span>
+            <span id="validBadge" class="badge badge-success">VALID FEN</span>
+          </div>
         </div>
+
+        <div id="verificationMsg" class="verification-msg" style="display: none;"></div>
 
         <div class="fen-box">
           <textarea id="fenOutput" readonly rows="2"></textarea>
           <button id="copyFenBtn" class="btn-copy" title="Copy to clipboard">📋 Copy</button>
+        </div>
+
+        <!-- Interactive Board Preview & Square Editor -->
+        <div id="boardPreviewSection" class="board-preview-section" style="display: none;">
+          <div class="board-header-row">
+            <span class="section-label">Board Preview & Editor</span>
+            <span id="confidenceLabel" class="confidence-label">Confidence: 100%</span>
+          </div>
+          <div class="chessboard-wrapper">
+            <div id="chessBoardGrid" class="chessboard-grid"></div>
+          </div>
+          <div class="board-hint">Click any square to inspect or adjust piece</div>
+        </div>
+
+        <!-- Piece Selector Popover -->
+        <div id="piecePickerPopover" class="piece-picker-popover" style="display: none;">
+          <div class="picker-header">
+            <span id="pickerSquareName">Square e4</span>
+            <button id="closePickerBtn" class="picker-close" type="button">&times;</button>
+          </div>
+          <div class="picker-row">
+            <button type="button" class="picker-piece" data-piece="empty" title="Empty Square">∅ (Empty)</button>
+          </div>
+          <div class="picker-row white-pieces">
+            <button type="button" class="picker-piece" data-piece="white_king" title="White King">♔</button>
+            <button type="button" class="picker-piece" data-piece="white_queen" title="White Queen">♕</button>
+            <button type="button" class="picker-piece" data-piece="white_rook" title="White Rook">♖</button>
+            <button type="button" class="picker-piece" data-piece="white_bishop" title="White Bishop">♗</button>
+            <button type="button" class="picker-piece" data-piece="white_knight" title="White Knight">♘</button>
+            <button type="button" class="picker-piece" data-piece="white_pawn" title="White Pawn">♙</button>
+          </div>
+          <div class="picker-row black-pieces">
+            <button type="button" class="picker-piece" data-piece="black_king" title="Black King">♚</button>
+            <button type="button" class="picker-piece" data-piece="black_queen" title="Black Queen">♛</button>
+            <button type="button" class="picker-piece" data-piece="black_rook" title="Black Rook">♜</button>
+            <button type="button" class="picker-piece" data-piece="black_bishop" title="Black Bishop">♝</button>
+            <button type="button" class="picker-piece" data-piece="black_knight" title="Black Knight">♞</button>
+            <button type="button" class="picker-piece" data-piece="black_pawn" title="Black Pawn">♟</button>
+          </div>
         </div>
 
         <div class="action-buttons">
@@ -49,7 +93,7 @@
         </div>
 
         <div id="previewWrapper" class="preview-wrapper" style="display: none;">
-          <span class="section-label">Captured Position</span>
+          <span class="section-label">Captured Screenshot</span>
           <img id="previewImage" alt="Cropped Board Preview">
         </div>
       </div>

@@ -26,7 +26,45 @@ export const PIECE_TO_FEN = {
   empty: "",
 };
 
+export const FEN_TO_PIECE = {
+  K: "white_king",
+  Q: "white_queen",
+  R: "white_rook",
+  B: "white_bishop",
+  N: "white_knight",
+  P: "white_pawn",
+  k: "black_king",
+  q: "black_queen",
+  r: "black_rook",
+  b: "black_bishop",
+  n: "black_knight",
+  p: "black_pawn",
+};
+
+export const PIECE_TO_UNICODE = {
+  white_king: "♔",
+  white_queen: "♕",
+  white_rook: "♖",
+  white_bishop: "♗",
+  white_knight: "♘",
+  white_pawn: "♙",
+  black_king: "♚",
+  black_queen: "♛",
+  black_rook: "♜",
+  black_bishop: "♝",
+  black_knight: "♞",
+  black_pawn: "♟",
+  empty: "",
+};
+
+export const VERIFICATION_STATUS = {
+  VERIFIED: "VERIFIED",
+  NEEDS_REVIEW: "NEEDS_REVIEW",
+  INVALID: "INVALID",
+};
+
 export const CHESS_VISION_PROMPT = `Analyze the chessboard image and reconstruct the exact chess position.
+The image has coordinate labels along the board boundaries (files a-h on top/bottom, ranks 1-8 on left/right).
 
 Identify EVERY ONE of the 64 squares.
 
@@ -83,8 +121,9 @@ export const PROVIDERS = {
 
 export const DEFAULT_SETTINGS = {
   provider: "ollama_cloud",
-  ollamaCloudUrl: "http://localhost:11434",
-  ollamaCloudModel: "gemma4:cloud",
+  ollamaCloudUrl: "https://ollama.com",
+  ollamaCloudModel: "gemma4:31b",
+  ollamaApiKey: "",
   geminiApiKey: "",
   geminiModel: "gemini-2.5-flash",
   ollamaLocalUrl: "http://localhost:11434",

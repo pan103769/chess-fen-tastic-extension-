@@ -1,11 +1,25 @@
 /**
  * Popup Script for Chess FEN-tastic
+ * Features:
+ * - Proactive restricted-page checking
+ * - Verification status display (VERIFIED, NEEDS_REVIEW, INVALID)
+ * - Interactive 8x8 chessboard preview
+ * - 1-click square editor to inspect and adjust any piece
+ * - Real-time FEN recalculation, chess legality re-validation, and Lichess/Chess.com URL updates
  */
 
-import { isRestrictedUrl, RESTRICTED_PAGE_MESSAGE } from "../lib/constants.js";
+import {
+  isRestrictedUrl,
+  RESTRICTED_PAGE_MESSAGE,
+  FILES,
+  RANKS,
+  PIECE_TO_UNICODE,
+  VERIFICATION_STATUS,
+} from "../lib/constants.js";
+import { validateChessLegality, generateSafeFen } from "../lib/chess-validator.js";
+import { getBoardUrls, validateFen } from "../lib/fen.js";
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // Clear any status badge on extension icon
   if (chrome.action?.setBadgeText) {
     chrome.action.setBadgeText({ text: "" });
   }
@@ -18,14 +32,27 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const resultContainer = document.getElementById("resultContainer");
   const validBadge = document.getElementById("validBadge");
+  const verificationBadge = document.getElementById("verificationBadge");
+  const verificationMsg = document.getElementById("verificationMsg");
+
   const fenOutput = document.getElementById("fenOutput");
   const copyFenBtn = document.getElementById("copyFenBtn");
   const openLichessBtn = document.getElementById("openLichessBtn");
   const openChessComBtn = document.getElementById("openChessComBtn");
+
+  const boardPreviewSection = document.getElementById("boardPreviewSection");
+  const chessBoardGrid = document.getElementById("chessBoardGrid");
+  const confidenceLabel = document.getElementById("confidenceLabel");
+
+  const piecePickerPopover = document.getElementById("piecePickerPopover");
+  const pickerSquareName = document.getElementById("pickerSquareName");
+  const closePickerBtn = document.getElementById("closePickerBtn");
+
   const previewWrapper = document.getElementById("previewWrapper");
   const previewImage = document.getElementById("previewImage");
 
-  let currentUrls = null;
+  let currentResult = null;
+  let activeSelectedSquare = null;
 
   function updateStatus(state, message) {
     statusBox.className = "status-box";
@@ -45,16 +72,128 @@ document.addEventListener("DOMContentLoaded", async () => {
     statusMessage.textContent = message || "Ready";
   }
 
+  function renderInteractiveBoard(board, flaggedSquares = []) {
+    if (!chessBoardGrid || !board) return;
+    chessBoardGrid.innerHTML = "";
+
+    for (let rIdx = 0; rIdx < 8; rIdx++) {
+      const rank = RANKS[rIdx];
+      for (let fIdx = 0; fIdx < 8; fIdx++) {
+        const file = FILES[fIdx];
+        const square = `${file}${rank}`;
+        const piece = board[square] || "empty";
+
+        const squareEl = document.createElement("div");
+        const isLight = (fIdx + rIdx) % 2 === 0;
+        squareEl.className = `board-square ${isLight ? "light" : "dark"}`;
+        squareEl.dataset.square = square;
+        squareEl.title = `${square}: ${piece.replace("_", " ")}`;
+
+        if (flaggedSquares.includes(square)) {
+          squareEl.classList.add("flagged");
+        }
+        if (square === activeSelectedSquare) {
+          squareEl.classList.add("selected");
+        }
+
+        if (piece !== "empty" && PIECE_TO_UNICODE[piece]) {
+          const pieceSpan = document.createElement("span");
+          const isWhite = piece.startsWith("white_");
+          pieceSpan.className = `piece-char ${isWhite ? "white-piece" : "black-piece"}`;
+          pieceSpan.textContent = PIECE_TO_UNICODE[piece];
+          squareEl.appendChild(pieceSpan);
+        }
+
+        squareEl.addEventListener("click", () => {
+          openPiecePicker(square);
+        });
+
+        chessBoardGrid.appendChild(squareEl);
+      }
+    }
+  }
+
+  function openPiecePicker(square) {
+    activeSelectedSquare = square;
+    pickerSquareName.textContent = `Edit Square ${square.toUpperCase()}`;
+    piecePickerPopover.style.display = "flex";
+
+    // Highlight active square
+    document.querySelectorAll(".board-square").forEach((sq) => {
+      sq.classList.toggle("selected", sq.dataset.square === square);
+    });
+  }
+
+  function closePiecePicker() {
+    activeSelectedSquare = null;
+    piecePickerPopover.style.display = "none";
+    document.querySelectorAll(".board-square").forEach((sq) => {
+      sq.classList.remove("selected");
+    });
+  }
+
+  if (closePickerBtn) {
+    closePickerBtn.addEventListener("click", closePiecePicker);
+  }
+
+  // Handle piece selection from picker popover
+  document.querySelectorAll(".picker-piece").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!activeSelectedSquare || !currentResult || !currentResult.board) return;
+
+      const chosenPiece = btn.dataset.piece;
+      const targetSquare = activeSelectedSquare;
+
+      // Update piece on square
+      currentResult.board[targetSquare] = chosenPiece;
+
+      // Re-run validation and FEN construction
+      const legality = validateChessLegality(currentResult.board, currentResult.turn || "white");
+      const safeFen = generateSafeFen(currentResult.board, currentResult.turn || "white");
+      const isFormatValid = validateFen(safeFen);
+
+      currentResult.fen = safeFen;
+      currentResult.isValid = legality.isValid && isFormatValid;
+      currentResult.legalityErrors = legality.errors;
+      currentResult.urls = getBoardUrls(safeFen);
+
+      // Remove square from flagged list once manually adjusted
+      if (currentResult.flaggedSquares) {
+        currentResult.flaggedSquares = currentResult.flaggedSquares.filter(
+          (s) => s !== targetSquare
+        );
+      }
+
+      if (legality.isValid) {
+        currentResult.status =
+          (currentResult.flaggedSquares || []).length === 0
+            ? VERIFICATION_STATUS.VERIFIED
+            : VERIFICATION_STATUS.NEEDS_REVIEW;
+      } else {
+        currentResult.status = VERIFICATION_STATUS.INVALID;
+      }
+
+      // Update UI
+      displayResult(currentResult, previewImage.src);
+
+      // Save to storage
+      await chrome.storage.local.set({ lastResult: currentResult });
+
+      closePiecePicker();
+    });
+  });
+
   function displayResult(result, croppedImage) {
     if (!result || !result.fen) {
       resultContainer.style.display = "none";
       return;
     }
 
+    currentResult = result;
     resultContainer.style.display = "flex";
     fenOutput.value = result.fen;
-    currentUrls = result.urls;
 
+    // FEN Validity badge
     if (result.isValid) {
       validBadge.className = "badge badge-success";
       validBadge.textContent = "VALID FEN";
@@ -63,6 +202,48 @@ document.addEventListener("DOMContentLoaded", async () => {
       validBadge.textContent = "INVALID FEN";
     }
 
+    // Verification Status badge
+    const status = result.status || (result.isValid ? "VERIFIED" : "INVALID");
+    if (status === VERIFICATION_STATUS.VERIFIED) {
+      verificationBadge.className = "badge badge-verified";
+      verificationBadge.textContent = "VERIFIED";
+      verificationMsg.style.display = "none";
+    } else if (status === VERIFICATION_STATUS.NEEDS_REVIEW) {
+      verificationBadge.className = "badge badge-needs-review";
+      verificationBadge.textContent = "NEEDS REVIEW";
+      verificationMsg.className = "verification-msg has-warning";
+      verificationMsg.textContent =
+        result.statusMessage ||
+        `Please check flagged square(s): ${(result.flaggedSquares || []).join(", ")}`;
+      verificationMsg.style.display = "block";
+    } else {
+      verificationBadge.className = "badge badge-invalid";
+      verificationBadge.textContent = "INVALID";
+      verificationMsg.className = "verification-msg has-warning";
+      verificationMsg.textContent =
+        (result.legalityErrors && result.legalityErrors[0]) ||
+        result.statusMessage ||
+        "Position violates chess legality rules.";
+      verificationMsg.style.display = "block";
+    }
+
+    // Confidence label
+    if (confidenceLabel) {
+      const confPercent = Math.round(
+        (result.overallConfidence !== undefined ? result.overallConfidence : 0.98) * 100
+      );
+      confidenceLabel.textContent = `Confidence: ${confPercent}%`;
+    }
+
+    // Render interactive chessboard
+    if (result.board) {
+      boardPreviewSection.style.display = "flex";
+      renderInteractiveBoard(result.board, result.flaggedSquares || []);
+    } else {
+      boardPreviewSection.style.display = "none";
+    }
+
+    // Screenshot preview
     if (croppedImage) {
       previewImage.src = croppedImage;
       previewWrapper.style.display = "flex";
@@ -96,10 +277,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      // Check if current tab is a restricted browser internal page
       if (isRestrictedUrl(tab.url)) {
         updateStatus("error", RESTRICTED_PAGE_MESSAGE);
-        // Do NOT close popup window so the user sees this clear explanation
         return;
       }
 
@@ -107,7 +286,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       const response = await chrome.runtime.sendMessage({ type: "TRIGGER_CAPTURE" });
 
       if (response && response.status === "initiated") {
-        // Close popup window only when overlay was successfully launched
         window.close();
       } else if (response && response.status === "error") {
         updateStatus("error", response.message || "Failed to activate capture.");
@@ -142,15 +320,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Open Lichess
   openLichessBtn.addEventListener("click", () => {
-    if (currentUrls && currentUrls.lichess) {
-      chrome.tabs.create({ url: currentUrls.lichess });
+    if (currentResult && currentResult.urls && currentResult.urls.lichess) {
+      chrome.tabs.create({ url: currentResult.urls.lichess });
     }
   });
 
   // Open Chess.com
   openChessComBtn.addEventListener("click", () => {
-    if (currentUrls && currentUrls.chessCom) {
-      chrome.tabs.create({ url: currentUrls.chessCom });
+    if (currentResult && currentResult.urls && currentResult.urls.chessCom) {
+      chrome.tabs.create({ url: currentResult.urls.chessCom });
     }
   });
 

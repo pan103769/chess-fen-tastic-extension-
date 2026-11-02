@@ -29,7 +29,7 @@
                 <span class="badge badge-cloud">Cloud Inference</span>
               </div>
               <span class="radio-desc">
-                Local Ollama acts as client; inference runs in the cloud. Does not require downloading Gemma 4 locally.
+                Direct cloud inference via Ollama Cloud API. Does not require Ollama Desktop or local model downloads.
               </span>
             </div>
           </label>
@@ -71,21 +71,30 @@
         </div>
 
         <div class="info-callout">
-          <strong>How Ollama Cloud Works:</strong> Your local Ollama application (listening on localhost:11434) acts as the secure client bridge. The <code>gemma4:cloud</code> model executes in Ollama's high-speed cloud infrastructure. You do <em>not</em> need to download massive model weights to your computer.
+          <strong>Direct Ollama Cloud API:</strong> Visual inference runs directly in Ollama's high-speed cloud infrastructure. You do <em>not</em> need the Ollama desktop app, a local server, or downloaded model weights.
         </div>
 
         <div class="field">
-          <label for="ollamaCloudUrl">Local Ollama Client URL</label>
-          <input type="text" id="ollamaCloudUrl" placeholder="http://localhost:11434">
-          <span class="field-hint">Default is http://localhost:11434 (the local Ollama service).</span>
-        </div>
-
-        <div class="field">
-          <label>Model</label>
-          <div class="static-value-box">
-            <code>gemma4:cloud</code>
-            <span class="field-subnote">Pre-configured cloud model. No local download required.</span>
+          <label for="ollamaApiKey">Ollama Cloud API Key</label>
+          <div class="input-with-toggle">
+            <input type="password" id="ollamaApiKey" placeholder="Enter your Ollama Cloud API key">
+            <button type="button" id="toggleOllamaKeyBtn" class="btn-toggle">Show</button>
           </div>
+          <span class="field-hint">
+            Get your API key from <a href="https://ollama.com/settings/keys" target="_blank" rel="noreferrer">ollama.com/settings/keys</a>.
+          </span>
+        </div>
+
+        <div class="field">
+          <label for="ollamaCloudModel">Cloud Model</label>
+          <input type="text" id="ollamaCloudModel" placeholder="gemma4:31b">
+          <span class="field-hint">Default is <code>gemma4:31b</code> (Official Gemma 4 Cloud vision model). Also supports <code>gemma4</code>.</span>
+        </div>
+
+        <div class="field">
+          <label for="ollamaCloudUrl">Cloud API Endpoint</label>
+          <input type="text" id="ollamaCloudUrl" placeholder="https://ollama.com">
+          <span class="field-hint">Default is <code>https://ollama.com</code>.</span>
         </div>
 
         <div class="test-row">

@@ -1,5 +1,5 @@
 /**
- * Automated Tests for Vision API and Screenshot Capture Logic
+ * Automated Tests for Direct Ollama Cloud Vision API and Screenshot Capture Logic
  * Run with: node extension/tests/test_vision_and_capture.js
  */
 
@@ -9,7 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { isRestrictedUrl, RESTRICTED_PAGE_MESSAGE } from "../lib/constants.js";
 import {
-  checkOllamaStatus,
+  checkOllamaCloudStatus,
+  checkOllamaLocalStatus,
   callOllamaCloudVision,
   cleanBase64,
   recognizeChessboard,
@@ -45,148 +46,185 @@ test("Issue 2: Helpful error message for restricted pages", () => {
   assert.ok(RESTRICTED_PAGE_MESSAGE.includes("ordinary webpage"));
 });
 
-test("Issue 1: Ollama Cloud Status check with live Ollama instance", async () => {
-  const status = await checkOllamaStatus("http://localhost:11434", "gemma4:cloud");
-  assert.equal(status.connected, true);
-  assert.equal(status.modelFound, true);
-  assert.equal(status.isCloud, true);
-  assert.ok(status.models.some((m) => m.startsWith("gemma4:cloud")));
-});
-
-test("Issue 1: Ollama offline error reporting", async () => {
-  await assert.rejects(
-    async () => {
-      // Non-existent port
-      await checkOllamaStatus("http://localhost:59999", "gemma4:cloud");
-    },
-    (err) => {
-      assert.ok(err.message.includes("Cannot connect to Ollama at http://localhost:59999"));
-      assert.ok(err.message.toLowerCase().includes("ensure the ollama desktop application is running"));
-      return true;
-    }
-  );
-});
-
-test("Issue 1: Model availability verification and instructions", async () => {
-  await assert.rejects(
-    async () => {
-      await checkOllamaStatus("http://localhost:11434", "non_existent_special_model:cloud");
-    },
-    (err) => {
-      assert.ok(err.message.includes("is not registered in your Ollama client"));
-      assert.ok(err.message.includes("ollama run non_existent_special_model:cloud"));
-      return true;
-    }
-  );
-});
-
-test("Issue 1: Non-chessboard image rejection handling", async () => {
-  // 1x1 black image
-  const blankPngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-  const rawOutput = await callOllamaCloudVision("http://localhost:11434", blankPngBase64);
-  const { board, error } = parseBoard(rawOutput);
-
-  // Should cleanly detect missing squares error without crashing
-  assert.equal(board, null);
-  assert.ok(error && error.includes("Missing squares"));
-});
-
-test("Issue 1: Real Ollama Cloud gemma4:cloud image processing & valid FEN output", async () => {
-  const fixturePath = path.resolve("extension/tests/fixtures/sample_board_b64.txt");
-  assert.ok(fs.existsSync(fixturePath), "Fixture must exist");
-  const boardB64 = fs.readFileSync(fixturePath, "utf-8").trim();
-
-  const rawOutput = await callOllamaCloudVision("http://localhost:11434", boardB64);
-  assert.ok(rawOutput.length > 50, "Ollama Cloud should return recognition output");
-
-  const { board, turn, error } = parseBoard(rawOutput);
-  assert.equal(error, undefined, `Recognition should succeed without error: ${error}`);
-  assert.ok(board !== null, "Board object must be constructed");
-
-  const fen = generateFen(board, turn);
-  assert.ok(fen !== null, "FEN string must be generated");
-  assert.equal(validateFen(fen), true, `Generated FEN '${fen}' should be valid`);
-});
-
 test("Clean base64 helper removes prefixes correctly", () => {
   assert.equal(cleanBase64("data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="), "iVBORw0KGgoAAAANSUhEUg==");
   assert.equal(cleanBase64("iVBORw0KGgoAAAANSUhEUg=="), "iVBORw0KGgoAAAANSUhEUg==");
   assert.equal(cleanBase64(""), "");
 });
 
-test("Error classification: Distinguishes CORS 403 vs Cloud Auth 401/403", async () => {
+test("Ollama Cloud: Requires API key and throws user-friendly message when missing", async () => {
+  await assert.rejects(
+    async () => {
+      await callOllamaCloudVision({ apiKey: "", base64Image: "abc" });
+    },
+    (err) => {
+      assert.ok(err.message.includes("Ollama Cloud API Key is required"));
+      assert.ok(err.message.includes("ollama.com/settings/keys"));
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    async () => {
+      await checkOllamaCloudStatus("", "https://ollama.com", "gemma4:31b");
+    },
+    (err) => {
+      assert.ok(err.message.includes("Please enter your Ollama Cloud API key"));
+      return true;
+    }
+  );
+});
+
+test("Ollama Cloud: Status check verifies authentication and model availability", async () => {
   const originalFetch = globalThis.fetch;
 
-  // Subtest 1: HTTP 403 with empty body (typical CORS rejection)
-  globalThis.fetch = async () => new Response("", { status: 403, statusText: "Forbidden" });
+  // Mock successful response from https://ollama.com/api/tags
+  globalThis.fetch = async (url, options) => {
+    assert.ok(url.includes("/api/tags"));
+    assert.equal(options.headers.Authorization, "Bearer test_cloud_key");
+    return new Response(
+      JSON.stringify({
+        models: [
+          { name: "gemma4:31b", model: "gemma4:31b", capabilities: ["vision", "completion"] },
+          { name: "mistral-large-4", model: "mistral-large-4" },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  const status = await checkOllamaCloudStatus("test_cloud_key", "https://ollama.com", "gemma4:31b");
+  assert.equal(status.connected, true);
+  assert.equal(status.authenticated, true);
+  assert.equal(status.modelFound, true);
+  assert.ok(status.models.includes("gemma4:31b"));
+
+  // Mock 401 Unauthorized
+  globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
   await assert.rejects(
     async () => {
-      await callOllamaCloudVision("http://localhost:11434", "dummy_image");
+      await checkOllamaCloudStatus("bad_key", "https://ollama.com", "gemma4:31b");
     },
     (err) => {
-      assert.ok(err.message.includes("HTTP 403 CORS Forbidden"));
-      assert.ok(err.message.includes('OLLAMA_ORIGINS="*"'));
-      assert.equal(err.message.includes("sign in to Ollama"), false);
+      assert.ok(err.message.includes("Invalid Ollama Cloud API key"));
       return true;
     }
   );
 
-  // Subtest 2: HTTP 401 Unauthorized (real auth failure)
-  globalThis.fetch = async () => new Response(JSON.stringify({ error: "unauthorized: sign in required" }), {
-    status: 401,
-    statusText: "Unauthorized",
-    headers: { "Content-Type": "application/json" },
+  globalThis.fetch = originalFetch;
+});
+
+test("Ollama Cloud: Image submission sends correct Cloud payload and Bearer header", async () => {
+  const originalFetch = globalThis.fetch;
+  let sentPayload = null;
+  let sentHeaders = null;
+  let sentUrl = null;
+
+  globalThis.fetch = async (url, options) => {
+    sentUrl = url;
+    sentHeaders = options.headers;
+    sentPayload = JSON.parse(options.body);
+
+    // Generate mock 64-square response
+    const lines = [];
+    const files = "abcdefgh";
+    const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
+    for (const r of ranks) {
+      for (const f of files) {
+        lines.push(`${f}${r}: empty`);
+      }
+    }
+    lines.push("side_to_move: white");
+
+    return new Response(
+      JSON.stringify({
+        message: { content: lines.join("\n") },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  const output = await callOllamaCloudVision({
+    apiKey: "my_secret_cloud_key",
+    hostUrl: "https://ollama.com",
+    model: "gemma4:31b",
+    base64Image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
   });
+
+  assert.equal(sentUrl, "https://ollama.com/api/chat");
+  assert.equal(sentHeaders.Authorization, "Bearer my_secret_cloud_key");
+  assert.equal(sentPayload.model, "gemma4:31b");
+  assert.equal(sentPayload.stream, false);
+  assert.equal(sentPayload.messages[0].images[0], "iVBORw0KGgoAAAANSUhEUg==");
+
+  const { board, turn, error } = parseBoard(output);
+  assert.equal(error, undefined);
+  assert.equal(turn, "white");
+  assert.equal(board.e4, "empty");
+
+  const fen = generateFen(board, turn);
+  assert.equal(validateFen(fen), true);
+
+  globalThis.fetch = originalFetch;
+});
+
+test("Ollama Cloud: Error classification (401, 429, 404, network)", async () => {
+  const originalFetch = globalThis.fetch;
+
+  // 1. Rate limit (429)
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: "rate limit exceeded" }), { status: 429 });
   await assert.rejects(
     async () => {
-      await callOllamaCloudVision("http://localhost:11434", "dummy_image");
+      await callOllamaCloudVision({ apiKey: "key", base64Image: "abc" });
     },
     (err) => {
-      assert.ok(err.message.includes("Ollama Cloud authentication required"));
-      assert.ok(err.message.includes("ollama login"));
+      assert.ok(err.message.includes("rate limit exceeded"));
       return true;
     }
   );
 
-  // Subtest 3: HTTP 403 with auth error body
-  globalThis.fetch = async () => new Response(JSON.stringify({ error: "login required to access cloud model" }), {
-    status: 403,
-    statusText: "Forbidden",
-    headers: { "Content-Type": "application/json" },
-  });
+  // 2. Model not found (404)
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: "model not found" }), { status: 404 });
   await assert.rejects(
     async () => {
-      await callOllamaCloudVision("http://localhost:11434", "dummy_image");
+      await callOllamaCloudVision({ apiKey: "key", model: "non_existent_model", base64Image: "abc" });
     },
     (err) => {
-      assert.ok(err.message.includes("Ollama Cloud authentication required"));
+      assert.ok(err.message.includes("was not found"));
       return true;
     }
   );
 
-  // Restore fetch
   globalThis.fetch = originalFetch;
 });
 
 test("Model enforcement: recognizeChessboard routes strictly to configured provider", async () => {
   const originalFetch = globalThis.fetch;
   let requestedPayload = null;
+  let requestedHeaders = null;
 
   globalThis.fetch = async (url, options) => {
+    requestedHeaders = options.headers;
     requestedPayload = JSON.parse(options.body);
-    return new Response(JSON.stringify({
-      message: { content: "a8: empty\nside_to_move: white" }
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        message: { content: "a8: empty\nside_to_move: white" },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
   };
 
-  // 1. Ollama Cloud provider strictly uses gemma4:cloud
+  // 1. Ollama Cloud provider strictly uses cloud endpoint, model gemma4:31b, and Bearer token
   await recognizeChessboard("dummy_base64", {
     provider: "ollama_cloud",
-    ollamaCloudUrl: "http://localhost:11434",
+    ollamaApiKey: "test_key_123",
+    ollamaCloudUrl: "https://ollama.com",
+    ollamaCloudModel: "gemma4:31b",
   });
-  assert.equal(requestedPayload.model, "gemma4:cloud");
+  assert.equal(requestedPayload.model, "gemma4:31b");
+  assert.equal(requestedHeaders.Authorization, "Bearer test_key_123");
 
-  // 2. Ollama Local provider strictly uses specified local model
+  // 2. Ollama Local provider strictly routes to local model
   await recognizeChessboard("dummy_base64", {
     provider: "ollama_local",
     ollamaLocalUrl: "http://localhost:11434",
@@ -194,6 +232,18 @@ test("Model enforcement: recognizeChessboard routes strictly to configured provi
   });
   assert.equal(requestedPayload.model, "llama3.2-vision");
 
-  // Restore fetch
   globalThis.fetch = originalFetch;
+});
+
+test("Local Ollama: Offline error reporting for optional local server", async () => {
+  await assert.rejects(
+    async () => {
+      await checkOllamaLocalStatus("http://localhost:59999", "llama3.2-vision");
+    },
+    (err) => {
+      assert.ok(err.message.includes("Cannot connect to local Ollama at http://localhost:59999"));
+      assert.ok(err.message.includes("ensure the Ollama desktop application is running"));
+      return true;
+    }
+  );
 });
